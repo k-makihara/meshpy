@@ -9,16 +9,31 @@ import numpy as np
 import os
 import sys
 import time
-
-try:
-    import meshrender
-except:
-    pass
+import math
+import matplotlib.pyplot as plt
+import six
+import trimesh
+import gc
+import tracemalloc
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+#try:
+#    import meshrender
+#except:
+#    pass
 
 from autolab_core import Point, RigidTransform
 from autolab_core.utils import sph2cart, cart2sph
-from perception import CameraIntrinsics, BinaryImage, ColorImage, DepthImage, RgbdImage, ObjectRender
+#from perception import CameraIntrinsics, BinaryImage, ColorImage, DepthImage, RgbdImage, ObjectRender
+from autolab_core import BinaryImage, ColorImage, DepthImage, RgbdImage
+from perception import ObjectRender, CameraIntrinsics
 from meshpy import MaterialProperties, LightingProperties, RenderMode
+from visualization import Visualizer3D
+from visualization import Visualizer2D as vis2d
+
+
+import pyrender
 
 class ViewsphereDiscretizer(object):
     """Set of parameters for automatically rendering a set of images from virtual
@@ -328,7 +343,7 @@ class PlanarWorksurfaceDiscretizer(object):
                                 camera_y_par_obj = np.cross(camera_z_obj, camera_x_par_obj)
                                 camera_y_par_obj = camera_y_par_obj / np.linalg.norm(camera_y_par_obj)
                                 if camera_y_par_obj[2] > 0:
-                                    print 'Flipping', num_poses
+                                    print('Flipping', num_poses)
                                     camera_x_par_obj = -camera_x_par_obj
                                     camera_y_par_obj = np.cross(camera_z_obj, camera_x_par_obj)
                                     camera_y_par_obj = camera_y_par_obj / np.linalg.norm(camera_y_par_obj)
@@ -427,6 +442,80 @@ class VirtualCamera(object):
 
     def images(self, mesh, object_to_camera_poses,
                mat_props=None, light_props=None, enable_lighting=True, debug=False):
+        
+        def render_mesh(P,im_height,im_width,verts,tris,norms,mat_props,light_props):
+
+            proj_matrices = P
+
+            def draw_object():
+                glBegin(GL_TRIANGLES)
+                for i in range(tris.shape[0]):
+                    for j in range(3):
+                        idx = tris[i, j] - 1
+                        glNormal3f(norms[idx, 0], norms[idx, 1], norms[idx, 2])
+                        glVertex3f(verts[idx, 0], verts[idx, 1], verts[idx, 2])
+                glEnd()
+
+            def setup_camera(proj_matrix):
+                proj_matrix_4x4 = np.eye(4)
+                proj_matrix_4x4[:3, :] = proj_matrix
+                glMatrixMode(GL_PROJECTION)
+                glLoadMatrixf(proj_matrix_4x4.T)
+                glMatrixMode(GL_MODELVIEW)
+                glLoadIdentity()
+
+            def setup_material(mat_props):
+                glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, mat_props[:4])
+                glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, mat_props[4:8])
+                glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_props[8:12])
+                glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, mat_props[12])
+
+            def setup_lighting(light_props):
+                glEnable(GL_LIGHTING)
+                glEnable(GL_LIGHT0)
+                glLightfv(GL_LIGHT0, GL_POSITION, light_props[:4])
+                glLightfv(GL_LIGHT0, GL_AMBIENT, light_props[4:8])
+                glLightfv(GL_LIGHT0, GL_DIFFUSE, light_props[8:12])
+                glLightfv(GL_LIGHT0, GL_SPECULAR, light_props[12:])
+
+            def render_scene():
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+                setup_camera(proj_matrices)
+                setup_lighting(light_props)
+                setup_material(mat_props)
+                draw_object()
+                glutSwapBuffers()
+            
+            def check_gl_error():
+                error = glGetError()
+                if error != GL_NO_ERROR:
+                    print(f"OpenGL Error: {error}")
+
+
+            glutInit()
+            glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
+            glutInitWindowSize(im_width, im_height)
+            glutCreateWindow("Renderer")
+            glViewport(0, 0, im_width, im_height)
+            glEnable(GL_DEPTH_TEST)
+            glDisable(GL_CULL_FACE)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            check_gl_error()
+            glutDisplayFunc(render_scene)  # Add this line
+
+            glFinish()
+            # Read RGB and Depth image
+            c = glReadPixels(0, 0, im_width, im_height, GL_RGB, GL_UNSIGNED_BYTE)
+            c = np.frombuffer(c, dtype=np.uint8).reshape(im_height, im_width, 3)[::-1, :]
+
+            d = glReadPixels(0, 0, im_width, im_height, GL_DEPTH_COMPONENT, GL_FLOAT)
+            d = np.frombuffer(d, dtype=np.float32).reshape(im_height, im_width)[::-1, :]
+
+            # Cleanup
+            glutDestroyWindow(glutGetWindow())
+
+            return c, d
+        
         """Render images of the given mesh at the list of object to camera poses.
 
         Parameters
@@ -439,7 +528,7 @@ class VirtualCamera(object):
             Material properties for the mesh
         light_props : :obj:`MaterialProperties`
             Lighting properties for the scene
-        enable_lighting : bool
+        enable_lighting : bool 
             Whether or not to enable lighting
         debug : bool
             Whether or not to debug the C++ meshrendering code.
@@ -475,31 +564,40 @@ class VirtualCamera(object):
         color_ims = []
         depth_ims = []
         render_start = time.time()
+
         for T_obj_camera in object_to_camera_poses:
             # form projection matrix
             R = T_obj_camera.rotation
             t = T_obj_camera.translation
             P = self._camera_intr.proj_matrix.dot(np.c_[R, t])
-
+    
             # form light props
             light_props.set_pose(T_obj_camera)
             light_props_arr = light_props.arr
 
             # render images for each
-            c, d = meshrender.render_mesh([P],
-                                          self._camera_intr.height,
-                                          self._camera_intr.width,
-                                          vertex_arr,
-                                          tri_arr,
-                                          norms_arr,
-                                          mat_props_arr,
-                                          light_props_arr,
-                                          enable_lighting,
-                                          debug)
-            color_ims.extend(c)
-            depth_ims.extend(d)
+            c, d = render_mesh(P,
+                            self._camera_intr.height,
+                            self._camera_intr.width,
+                            vertex_arr,
+                            tri_arr,
+                            norms_arr,
+                            mat_props_arr,
+                            light_props_arr)
+            color_ims.append(c)
+            depth_ims.append(d)
+
         render_stop = time.time()
         logging.debug('Rendering took %.3f sec' %(render_stop - render_start))
+
+        plt.figure()
+        plt.subplot(1,2,1)
+        plt.axis('off')
+        plt.imshow(color_ims[0])
+        plt.subplot(1,2,2)
+        plt.axis('off')
+        plt.imshow(depth_ims[0], cmap=plt.cm.gray_r)
+        plt.show()
 
         return color_ims, depth_ims
 
@@ -591,7 +689,7 @@ class VirtualCamera(object):
         if render_mode == RenderMode.SEGMASK:
             # wrap binary images
             for binary_im in color_ims:
-                images.append(BinaryImage(binary_im[:,:,0], frame=self._camera_intr.frame, threshold=0))
+                images.append(BinaryImage(255 - binary_im[:,:,0], frame=self._camera_intr.frame, threshold=0))
 
         elif render_mode == RenderMode.COLOR:
             # wrap color images
@@ -603,9 +701,10 @@ class VirtualCamera(object):
             for color_im in color_ims:
                 images.append(ColorImage(color_im, frame=self._camera_intr.frame))
 
+
             # render images of scene objects
             color_scene_ims = {}
-            for name, scene_obj in self._scene.iteritems():
+            for name, scene_obj in six.iteritems(self._scene):
                 scene_object_to_camera_poses = []
                 for world_to_camera_pose in world_to_camera_poses:
                     scene_object_to_camera_poses.append(world_to_camera_pose * scene_obj.T_mesh_world)
@@ -629,13 +728,18 @@ class VirtualCamera(object):
             for depth_im in depth_ims:
                 images.append(DepthImage(depth_im, frame=self._camera_intr.frame))
 
+
             # render images of scene objects
             depth_scene_ims = {}
-            for name, scene_obj in self._scene.iteritems():
+            for name, scene_obj in six.iteritems(self._scene):
                 scene_object_to_camera_poses = []
                 for world_to_camera_pose in world_to_camera_poses:
                     scene_object_to_camera_poses.append(world_to_camera_pose * scene_obj.T_mesh_world)
                 depth_scene_ims[name] = self.wrapped_images(scene_obj.mesh, scene_object_to_camera_poses, RenderMode.DEPTH, mat_props=scene_obj.mat_props, light_props=light_props)
+            
+            
+            
+
 
             # combine with scene images
             for i in range(len(images)):
@@ -658,7 +762,7 @@ class VirtualCamera(object):
 
             # render images of scene objects
             rgbd_scene_ims = {}
-            for name, scene_obj in self._scene.iteritems():
+            for name, scene_obj in six.iteritems(self._scene):
                 scene_object_to_camera_poses = []
                 for world_to_camera_pose in world_to_camera_poses:
                     scene_object_to_camera_poses.append(world_to_camera_pose * scene_obj.T_mesh_world)
@@ -677,6 +781,8 @@ class VirtualCamera(object):
                 images.append(d.to_color())
         else:
             raise ValueError('Render mode %s not supported' %(render_mode))
+        
+        
 
         # create object renders
         if stable_pose is not None:

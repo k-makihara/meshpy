@@ -5,7 +5,7 @@ Author: Jeff Mahler
 import numpy as np
 import os
 
-import sdf
+import meshpy.sdf as sdf
 
 class SdfFile:
     """

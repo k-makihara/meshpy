@@ -3,11 +3,12 @@ Encapsulates mesh for grasping operations
 Authors: Jeff Mahler and Matt Matl
 """
 import math
-import Queue
+import queue as Queue
 import os
 import random
 from subprocess import Popen
 import sys
+import copy
 
 import numpy as np
 import scipy.spatial as ss
@@ -16,8 +17,8 @@ import trimesh as tm
 
 from autolab_core import RigidTransform, Point, Direction, PointCloud, NormalCloud
 
-import obj_file
-import stable_pose as sp
+import meshpy.obj_file 
+import meshpy.stable_pose as sp
 
 class Mesh3D(object):
     """A triangular mesh for a three-dimensional shape representation.
@@ -82,19 +83,36 @@ class Mesh3D(object):
         uniform_com : bool
             Whether or not to assume a uniform mass density for center of mass comp
         """
+        self.vertices_ = None
         if vertices is not None:
             vertices = np.array(vertices)
-        self.vertices_ = vertices
+            vv = copy.deepcopy(vertices)
+            vert = [list(vertice) for vertice in vv]
+            arr = np.array(vert)
+            self.vertices_ = arr
 
+        self.triangles_ = None
         if triangles is not None:
             triangles = np.array(triangles)
-        self.triangles_ = triangles
+            vv = copy.deepcopy(triangles)
+            vert = [list(vertice) for vertice in vv]
+            arr = np.array(vert)
+            self.triangles_ = arr
+        
 
+        
+        self.normals_ = None
         if normals is not None:
             normals = np.array(normals)
             if normals.shape[0] == 3:
                 normals = normals.T
-        self.normals_ = normals
+            vv = copy.deepcopy(normals)
+            vert = [list(vertice) for vertice in vv]
+            arr = np.array(vert)
+            self.normals_ = arr
+            
+
+        
 
         self.density_ = density
 
@@ -255,7 +273,11 @@ class Mesh3D(object):
             A 3-ndarray of floats that represents the minimal
             x, y, and z coordinates represented in the mesh.
         """
+        #vv = copy.deepcopy(self.vertices_)
+        #vert = [list(vertice) for vertice in vv]
+        #arr = np.array(vert)
         return np.min(self.vertices_, axis=0)
+        #return np.min(arr, axis=0)
 
     def max_coords(self):
         """Returns the maximum coordinates of the mesh.
@@ -266,7 +288,11 @@ class Mesh3D(object):
             A 3-ndarray of floats that represents the minimal
             x, y, and z coordinates represented in the mesh.
         """
+        #vv = copy.deepcopy(self.vertices_)
+        #vert = [list(vertice) for vertice in vv]
+        #arr = np.array(vert)
         return np.max(self.vertices_, axis=0)
+        #return np.max(arr, axis=0)
 
     def bounding_box(self):
         """Returns the mesh's bounding box corners.
@@ -482,7 +508,7 @@ class Mesh3D(object):
         reffed_v_old_ind = reffed_v_old_ind[0]
 
         # Count number of referenced vertices before each index
-        reffed_v_new_ind = np.cumsum(reffed_array).astype(np.int) - 1
+        reffed_v_new_ind = np.cumsum(reffed_array).astype(np.int64) - 1
 
         try:
             self.vertices = self.vertices_[reffed_v_old_ind, :]
@@ -1094,7 +1120,7 @@ class Mesh3D(object):
             combined_normals = np.zeros([total_vertices, 3])
             combined_normals[:self.num_vertices, :] = self.normals
             combined_normals[self.num_vertices:, :] = other_mesh.normals
-        return Mesh3D(combined_vertices, combined_triangles.astype(np.int32), combined_normals)
+        return Mesh3D(combined_vertices, combined_triangles.astype(np.int64), combined_normals)
 
     def flip_tri_orientation(self):
         """ Flips the orientation of all triangles. """
@@ -1295,7 +1321,11 @@ class Mesh3D(object):
             3-ndarray of floats that contains the coordinates
             of the centroid.
         """
+        #vv = copy.deepcopy(self.vertices_)
+        #vert = [list(vertice) for vertice in vv]
+        #arr = np.array(vert)
         return np.mean(self.vertices_, axis=0)
+        #return np.mean(arr, axis=0)
 
     def _signed_volume_of_tri(self, tri):
         """Return the signed volume of the given triangle.
@@ -1833,7 +1863,7 @@ class Mesh3D(object):
         :obj:`list` of :obj:`_Segments`
             The list of line segments that were closest to the input point.
         """
-        min_dist = sys.maxint
+        min_dist = sys.maxsize
         min_segs = []
         distances = []
         segments = []

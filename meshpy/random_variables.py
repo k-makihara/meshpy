@@ -7,12 +7,15 @@ import logging
 
 import numpy as np
 import scipy.stats as ss
+import six
 
 from autolab_core import Point, RigidTransform, RandomVariable
 from autolab_core.utils import sph2cart, cart2sph
 from perception import CameraIntrinsics, BinaryImage, ColorImage, DepthImage, ObjectRender, RenderMode
 
-from mesh_renderer import VirtualCamera, SceneObject
+from meshpy.mesh_renderer import VirtualCamera, SceneObject
+
+import matplotlib.pyplot as plt
 
 class CameraSample(object):
     """ Struct to encapsulate the results of sampling a camera and its pose. """
@@ -488,7 +491,7 @@ class UniformPlanarWorksurfaceImageRandomVariable(RandomVariable):
 
             # render images
             camera = VirtualCamera(camera_sample.camera_intr)
-            for name, scene_obj in self.scene_objs.iteritems():
+            for name, scene_obj in six.iteritems(self.scene_objs):
                 camera.add_to_scene(name, scene_obj)
 
             image_bundle = {}
@@ -497,6 +500,8 @@ class UniformPlanarWorksurfaceImageRandomVariable(RandomVariable):
                                                [camera_sample.object_to_camera_pose],
                                                render_mode, stable_pose=self.stable_pose)
                 image_bundle[render_mode] = images[0]
+            
+            #plt.imshow(image_bundle[RenderMode.DEPTH_SCENE]); plt.show()
 
             # convert to camera pose
             samples.append(RenderSample(image_bundle, camera_sample))

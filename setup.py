@@ -18,10 +18,10 @@ class PostInstallCmd(install):
         install.run(self)
 
 requirements = [
-    'numpy',
-    'scipy',
-    'sklearn',
-    'Pillow',
+    #'numpy==1.16.5',
+    #'scipy==1.2.2',
+    #'scikit-learn==0.20.4',
+    #'Pillow==6.2.1',
 ]
 
 setup(name='meshpy',
@@ -33,9 +33,9 @@ setup(name='meshpy',
     packages=['meshpy'],
     #ext_modules = [meshrender],
     install_requires=requirements,
-    test_suite='test',
-    cmdclass={
-        'install': PostInstallCmd,
-        'develop': PostDevelopCmd
-    }
+    test_suite='test'
+    #cmdclass={
+    #    'install': PostInstallCmd,
+    #    'develop': PostDevelopCmd
+    #}
 )

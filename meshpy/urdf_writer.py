@@ -7,11 +7,12 @@ import logging
 import numpy as np
 import os
 from subprocess import Popen
+import glob
 
 import xml.etree.cElementTree as et
 
-from mesh import Mesh3D
-from obj_file import ObjFile
+from meshpy.mesh import Mesh3D
+from meshpy.obj_file import ObjFile
 
 def split_vhacd_output(mesh_filename):
     """ Splits the output of vhacd into multiple .OBJ files.
@@ -98,15 +99,19 @@ def convex_decomposition(mesh, cache_dir='', name='mesh'):
     obj_filename = os.path.join(cache_dir, '%s.obj' %(name))
     vhacd_out_filename = os.path.join(cache_dir, '%s_vhacd.obj' %(name))
     log_filename = os.path.join(cache_dir, 'vhacd_log.txt')
-    print obj_filename
+    print(obj_filename)
     ObjFile(obj_filename).write(mesh)
 
     # use v-hacd for convex decomposition
-    cvx_decomp_cmd = 'vhacd --input %s --output %s --log %s' %(obj_filename,
-                                                               vhacd_out_filename,
-                                                               log_filename)
+    cvx_decomp_cmd = '/Users/user/aist_dev/gqcnn-sim/3rdparty/dexnet/deps/v-hacd/app/build/TestVHACD %s -o obj' %(obj_filename)
     vhacd_process = Popen(cvx_decomp_cmd, bufsize=-1, close_fds=True, shell=True)
     vhacd_process.wait()
+
+    print(vhacd_out_filename)
+    mv_cmd = 'mv /Users/user/aist_dev/gqcnn-sim/3rdparty/dexnet/decomp.obj %s' %(vhacd_out_filename)
+    mv_process = Popen(mv_cmd, bufsize=-1, close_fds=True, shell=True)
+    mv_process.wait()
+
 
     # check success
     if not os.path.exists(vhacd_out_filename):
@@ -114,7 +119,9 @@ def convex_decomposition(mesh, cache_dir='', name='mesh'):
         return None
 
     # create separate convex piece files
-    convex_piece_files = split_vhacd_output(vhacd_out_filename)
+    convex_piece_files = glob.glob(obj_filename[:-4] + '???.obj')
+    #print(convex_piece_files)
+    #convex_piece_files = split_vhacd_output(vhacd_out_filename)
 
     # read convex pieces
     convex_piece_meshes = []

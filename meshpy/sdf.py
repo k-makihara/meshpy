@@ -15,6 +15,8 @@ from autolab_core import RigidTransform, SimilarityTransform, PointCloud, Point,
 
 from sys import version_info
 
+from scipy.interpolate import RegularGridInterpolator
+
 if version_info[0] != 3:
     range = xrange
 
@@ -227,14 +229,14 @@ class Sdf3D(Sdf):
         self.surface_thresh_ = self.resolution_ * np.sqrt(2) / 2 # resolution is max dist from surface when surf is orthogonal to diagonal grid cells
         spts, _ = self.surface_points()
         self.center_ = 0.5 * (np.min(spts, axis=0) + np.max(spts, axis=0))
-        self.points_buf_ = np.zeros([Sdf3D.num_interpolants, 3], dtype=np.int)
+        self.points_buf_ = np.zeros([Sdf3D.num_interpolants, 3], dtype=np.int64)
         self.coords_buf_ = np.zeros([3,])
         self.pts_ = None
 
         # tranform sdf basis to grid (X and Z axes are flipped!)
         t_world_grid = self.resolution_ * self.center_
         s_world_grid = 1.0 / self.resolution_
-        t_grid_sdf = self.origin
+        t_grid_sdf = self.origin #/ self.resolution
         self.T_grid_sdf_ = SimilarityTransform(translation=t_grid_sdf,
                                                scale=self.resolution,
                                                from_frame='grid',
@@ -252,6 +254,10 @@ class Sdf3D(Sdf):
             self.data_ = np.abs(self.data_)
 
         self._compute_gradients()
+
+        self._interpolator = RegularGridInterpolator((np.arange(self.dims_[0]), np.arange(self.dims_[1]), np.arange(self.dims_[2])),
+                                                     self.data_)
+        self.int_dims_ = np.array(self.dims_) - 1
 
     def transform(self, delta_T):
         """ Creates a new SDF with a given pose with respect to world coordinates.
@@ -285,22 +291,31 @@ class Sdf3D(Sdf):
         IndexError
             If the coords vector does not have three entries.
         """
-        pass
-        if len(coords) != 3:
-            raise IndexError('Indexing must be 3 dimensional') 
-        if self.is_out_of_bounds(coords):
-            logging.debug('Out of bounds access. Snapping to SDF dims')
+        # if len(coords) != 3:
+        #     raise IndexError('Indexing must be 3 dimensional')
+        # if self.is_out_of_bounds(coords):
+        #     logging.debug('Out of bounds access. Snapping to SDF dims')
 
         # snap to grid dims
-        self.coords_buf_[0] = max(0, min(coords[0], self.dims_[0] - 1))
-        self.coords_buf_[1] = max(0, min(coords[1], self.dims_[1] - 1))
-        self.coords_buf_[2] = max(0, min(coords[2], self.dims_[2] - 1))
+        # self.coords_buf_[0] = max(0, min(coords[0], self.dims_[0] - 1))
+        # self.coords_buf_[1] = max(0, min(coords[1], self.dims_[1] - 1))
+        # self.coords_buf_[2] = max(0, min(coords[2], self.dims_[2] - 1))
 
         # regular indexing if integers
-        if np.issubdtype(type(coords[0]), np.integer) and \
-           np.issubdtype(type(coords[1]), np.integer) and \
-           np.issubdtype(type(coords[2]), np.integer):
-            return self.data_[int(self.coords_buf_[0]), int(self.coords_buf_[1]), int(self.coords_buf_[2])]
+        # if np.issubdtype(type(coords[0]), np.integer) and \
+        #    np.issubdtype(type(coords[1]), np.integer) and \
+        #    np.issubdtype(type(coords[2]), np.integer):
+        #     return self.data_[int(self.coords_buf_[0]), int(self.coords_buf_[1]), int(self.coords_buf_[2])]
+
+        tst = np.vstack([coords])
+        if tst.shape[1] != 3:
+            raise IndexError('Indexing must be 3 dimensional')
+        tst = np.clip(tst, 0, self.int_dims_)
+        try:
+            v = self._interpolator(tst).squeeze()
+        except ValueError:
+            print(coords)
+        return v
 
         # otherwise interpolate
         min_coords = np.floor(self.coords_buf_)
@@ -494,30 +509,45 @@ class Sdf3D(Sdf):
             return None
 
         # collect all surface points within the delta sphere
-        X = []
-        d = np.zeros(3)
-        dx = -delta
-        while dx <= delta:
-            dy = -delta
-            while dy <= delta:
-                dz = -delta
-                while dz <= delta:
-                    d = np.array([dx, dy, dz])
-                    if dx != 0 or dy != 0 or dz != 0:
-                        d = delta * d / np.linalg.norm(d)
-                    index_coords[0] = coords[0] + d[0]
-                    index_coords[1] = coords[1] + d[1]
-                    index_coords[2] = coords[2] + d[2]
-                    sdf_val = self[index_coords]
-                    if np.abs(sdf_val) < self.surface_thresh_:
-                        X.append([index_coords[0], index_coords[1], index_coords[2], sdf_val])
-                    dz += delta
-                dy += delta
-            dx += delta
+        # X = []
+        # d = np.zeros(3)
+        # dx = -delta
+        # while dx <= delta:
+        #     dy = -delta
+        #     while dy <= delta:
+        #         dz = -delta
+        #         while dz <= delta:
+        #             d = np.array([dx, dy, dz])
+        #             if dx != 0 or dy != 0 or dz != 0:
+        #                 d = delta * d / np.linalg.norm(d)
+        #             index_coords[0] = coords[0] + d[0]
+        #             index_coords[1] = coords[1] + d[1]
+        #             index_coords[2] = coords[2] + d[2]
+        #             sdf_val = self[index_coords]
+        #             if np.abs(sdf_val) < self.surface_thresh_:
+        #                 X.append([index_coords[0], index_coords[1], index_coords[2], sdf_val])
+        #             dz += delta
+        #         dy += delta
+        #     dx += delta
+
+        a = np.linspace(-delta, delta, 3)
+        ind_coords = np.stack(np.meshgrid(a, a, a), -1).reshape(-1, 3)
+        ind_coords = delta*ind_coords/(np.linalg.norm(ind_coords, axis=1).reshape((-1, 1))+1e-10) + coords
+        ind_coords = np.hstack((ind_coords, self[ind_coords].reshape((-1, 1))))
+        ind_coords = ind_coords[np.abs(ind_coords[:, 3]) < self.surface_thresh_]
+
+        ind = np.argsort(ind_coords[:, 3])
+        X = ind_coords[ind, :3]
 
         # fit a plane to the surface points
-        X.sort(key = lambda x: x[3])
-        X = np.array(X)[:,:3]
+        # X.sort(key = lambda x: x[3])
+        # X = np.array(X)[:,:3]
+
+        # print('---')
+        # print(X)
+        # print(X2)
+        # print(np.allclose(X, X2))
+
         A = X - np.mean(X, axis=0)
         try:
             U, S, V = np.linalg.svd(A.T)
